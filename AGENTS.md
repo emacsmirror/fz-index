@@ -40,6 +40,10 @@ the surrounding style.
   `ert-run-tests-batch-and-exit`).  `test-*.el` — batch
   integration/performance scripts (NOT ert); each exits non-zero on
   failure.  `melpa-recipe` — recipe to submit to melpa/melpa.
+  README.org is deliberately NOT in the recipe (MELPA does not
+  package READMEs); the user-facing module-install and
+  security-model notes live in the `;;; Commentary:` of
+  `fz-index.el`, which is what the MELPA package page shows.
 - `.github/workflows/build.yml` — ERT + integration tests on
   ubuntu/macOS/Windows × Emacs 28.2/29.4/30.2, checkdoc and
   package-lint, an ASan+UBSan job with `clang --analyze`, and
@@ -188,7 +192,9 @@ show up locally.  Therefore:
 
 ## When changing things
 
-- Keep `README.org` in sync with key bindings and user options.
+- Keep `README.org` in sync with key bindings and user options, and
+  keep the `;;; Commentary:` of `fz-index.el` in sync with the
+  module-install and security-model sections of README.org.
 - Run the full test loop above.  Besides it, CI gates on
   byte-compilation, `check-parens`, checkdoc, package-lint and
   `clang --analyze` (see `.github/workflows/build.yml`).

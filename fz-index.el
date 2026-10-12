@@ -36,6 +36,31 @@
 ;;   (in the results buffer, RET opens the file on the current
 ;;   line; isearch works there too), C-g to quit.
 
+;; The native module:
+
+;; fz-index needs the fz-index-core dynamic module.  On first use it
+;; is installed automatically (`fz-index-module-auto-install',
+;; default t): a prebuilt binary matching your platform is downloaded
+;; from the project's GitHub Releases and verified against the SHA-256
+;; checksum published with the release (Linux/macOS/Windows, x86_64
+;; and aarch64); failing that, the bundled fz-index.c is compiled
+;; with a local gcc/clang (only emacs-module.h and a C99 compiler are
+;; needed).  With `fz-index-module-auto-install' nil, a missing
+;; module just raises an error.
+
+;; Security and trust model:
+
+;; Using this package loads native code into your Emacs process.  The
+;; prebuilt binaries are built by the project's CI from the committed
+;; fz-index.c and verified against the SHA-256 in the release's
+;; checksums.txt.  That protects against a corrupted or truncated
+;; download, but it is not a defense against a compromised release:
+;; anyone who can publish to the repository or its CI can ship a
+;; binary together with a matching checksum.  The alternative is to
+;; compile the bundled fz-index.c yourself, which runs a compiler you
+;; already trust on source you can read; to take only that path, set
+;; `fz-index-module-auto-install' to nil.
+
 ;; This file is part of an independent project; it is NOT a
 ;; contribution to GNU Emacs.
 
@@ -44,14 +69,16 @@
 (require 'seq)
 (require 'subr-x)
 
-;; Provided by the fz-index dynamic module (fz-index-core.so).
-(declare-function fz-index-build "fz-index-core")
-(declare-function fz-index-count "fz-index-core")
-(declare-function fz-index-destroy "fz-index-core")
-(declare-function fz-index-load "fz-index-core")
-(declare-function fz-index-ready-p "fz-index-core")
-(declare-function fz-index-save "fz-index-core")
-(declare-function fz-query "fz-index-core")
+;; Provided by the fz-index dynamic module (fz-index-core<suffix>).
+;; The "ext:" prefix tells check-declare not to look for a Lisp file
+;; defining these; the definitions are DEFUNs in fz-index.c.
+(declare-function fz-index-build "ext:fz-index-core")
+(declare-function fz-index-count "ext:fz-index-core")
+(declare-function fz-index-destroy "ext:fz-index-core")
+(declare-function fz-index-load "ext:fz-index-core")
+(declare-function fz-index-ready-p "ext:fz-index-core")
+(declare-function fz-index-save "ext:fz-index-core")
+(declare-function fz-query "ext:fz-index-core")
 
 (defgroup fz-index nil
   "Fast fuzzy file open backed by a native index."
