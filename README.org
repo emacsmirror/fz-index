@@ -1,8 +1,39 @@
 #+TITLE: fz-index — Sublime-style fuzzy file open for Emacs
 
-Native-index fuzzy file search that stays responsive at Chromium scale
-(400k+ files).  The candidate index lives in a C dynamic module (outside
-the Emacs Lisp heap); each keystroke only pulls top-K results into Lisp.
+fz-index ports Sublime Text's Goto Anything to Emacs: open any file in a
+project by typing a few fragments of its path.  The file you meant ranks
+first, and a live preview follows as you move through the matches.
+
+Two things make it Sublime-style rather than yet another fuzzy finder:
+
+- *Ranking.*  Scoring uses a Smith-Waterman-style DP that evaluates every
+  alignment of the query against the path — the model reverse-engineered
+  from Sublime (=fts_fuzzy_match=) — instead of a greedy left-to-right
+  match.  Consecutive runs and word/camelCase boundaries win, so =emacs.c=
+  ranks =src/emacs.c= first.  The built-in =flex= completion style and flx
+  use greedy or heatmap heuristics and produce visibly different orderings.
+- *Interaction.*  An explicit base directory (Sublime's project folder);
+  an empty query lists your most-opened files, frecency-ranked; moving the
+  selection previews the file in the window you came from; space-separated
+  words match in any order (=util hash c= finds =src/util/hash.c=); and
+  there is a results buffer you can jump into, isearch and click.
+
+The candidate index lives in a C dynamic module, outside the Emacs Lisp
+heap, and each keystroke pulls only the top matches into Lisp — so
+per-keystroke cost does not grow with project size, which is what keeps
+the above responsive on a 400k-file tree.  No external program (find, fd,
+fzf) is required at any point, so the same setup works on Windows.
+
+* How it differs from consult-find / projectile / fzf.el
+
+- =consult-find= and =fzf.el= shell out to an external program
+  (find/fd/fzf) and stream the whole file list through a process pipe;
+  fz-index keeps the index in-process, so per-keystroke cost depends on
+  neither process startup nor pipe throughput, and ranking follows the
+  Sublime model above rather than the external tool's own algorithm.
+- =projectile= and friends index in Emacs Lisp, where hundreds of
+  thousands of file names pressure the GC; fz-index holds paths in C
+  memory and hands Lisp only the top 100 matches per keystroke.
 
 * Install
 
@@ -33,6 +64,17 @@ The recipe has been submitted and is pending review
 ([[https://github.com/melpa/melpa/pull/10252][melpa/melpa#10252]]).
 Once merged, =M-x package-install RET fz-index RET= becomes the
 recommended way to install; until then, use package-vc above.
+
+** elpaca / straight.el
+
+#+begin_src elisp
+;; For users of elpaca.el
+(elpaca (fz-index :host github :repo "uppet/fz-index"))
+
+;; For users of straight.el
+(straight-use-package
+ '(fz-index :type git :host github :repo "uppet/fz-index"))
+#+end_src
 
 ** Manual
 
@@ -96,6 +138,8 @@ https://github.com/uppet/fz-index/releases.
 
 * Usage
 
+** Choosing the base directory
+
 - =M-x fz-index-open-set-base= — set the base directory (like
   Sublime's project folder); all later =fz-index-open-file= calls
   search from there.  Without it, the current directory is the base
@@ -109,6 +153,9 @@ https://github.com/uppet/fz-index/releases.
         (lambda () (when-let ((project (project-current)))
                      (project-root project))))
   #+end_src
+
+** Searching
+
 - =M-x fz-index-open-file= — fuzzy-find a file under the base
   directory; with empty input, your most-opened files under the base
   are shown
@@ -119,52 +166,77 @@ https://github.com/uppet/fz-index/releases.
   =fz-index-match=)
 - *Multi-word queries*: space-separated words must all match, in any
   order (=util hash c= finds =src/util/hash.c=), like Sublime and fzf
-- =C-o= jumps between the minibuffer and the results buffer; in the
-  results buffer, isearch (=C-s=) works, =RET= opens the file on the
-  current line and =C-u RET= opens it in another window
+- *Smart case*: an all-lowercase query is case-insensitive; any
+  uppercase letter makes it case-sensitive
 - =TAB= fills the minibuffer with the selected candidate, so you can
   refine the query from it
-- =RET= open, =C-u RET= open in another window,
-  =M-RET= insert the relative path into the buffer you came from,
-  =C-g= quit
-- Moving the selection previews the file in the origin window,
-  debounced by =fz-index-preview-delay= so rapid navigation stays
-  free; =C-l= toggles preview (files larger than
-  =fz-index-preview-max-size= are skipped)
+- =M-p= / =M-n= browse your previous queries (minibuffer history)
 - Re-querying on minibuffer input is debounced by
   =fz-index-query-delay= (default 0.01s), so fast typing does not
   launch a query per keystroke; confirming always applies any
   pending update first
-- Opened files get a frecency bonus on later queries: log2-compressed
-  open counts with a half-life decay on the last-open time
-  (=fz-index-frecency-half-life=, default 7 days), so stale favorites
-  gradually lose their lead.  Queries fetch several times the display
-  limit before ranking, so a strong bonus can pull a favorite back
-  into view even when its raw score ranks below the limit.  History
-  persists in =fz-index-history-file=, and =fz-index-read-file= (the
-  completing-read entry point) feeds the same history
-- =M-p= / =M-n= browse your previous queries (minibuffer history)
-- =M-x fz-index-reset= — drop the cached index (rebuilt on next
-  query) and clear the base set by =fz-index-open-set-base=
-- =M-x fz-index-read-file= — the same search through
-  =completing-read=, for users of vertico/icomplete/fido or the
-  default completion UI (on Emacs 31.1+, =*Completions*= appears and
-  updates live via the eager-display/eager-update metadata).
-  =fz-index-completion-table= exposes the engine for custom
-  integrations (see the docstring)
+
+** Opening
+
+- =RET= open, =C-u RET= open in another window,
+  =M-RET= insert the relative path into the buffer you came from,
+  =C-g= quit
+
+** The results buffer
+
+=C-o= jumps between the minibuffer and the results buffer; in the
+results buffer, isearch (=C-s=) works, =RET= opens the file on the
+current line, =C-u RET= opens it in another window, and =mouse-1=
+opens the clicked candidate.
+
+** Preview
+
+Moving the selection previews the file in the origin window,
+debounced by =fz-index-preview-delay= so rapid navigation stays
+free; =C-l= toggles preview (files larger than
+=fz-index-preview-max-size= are skipped).
+
+** Frecency and history
+
+Opened files get a frecency bonus on later queries: log2-compressed
+open counts with a half-life decay on the last-open time
+(=fz-index-frecency-half-life=, default 7 days), so stale favorites
+gradually lose their lead.  Queries fetch several times the display
+limit before ranking (=fz-index-query-oversample=), so a strong bonus
+can pull a favorite back into view even when its raw score ranks
+below the limit.  History persists in =fz-index-history-file=, and
+=fz-index-read-file= (the completing-read entry point) feeds the
+same history.
+
+** Using it through completing-read
+
+=M-x fz-index-read-file= runs the same search through
+=completing-read=, for users of vertico/icomplete/fido or the
+default completion UI (on Emacs 31.1+, =*Completions*= appears and
+updates live via the eager-display/eager-update metadata).
+=fz-index-completion-table= exposes the engine for custom
+integrations (see the docstring).
+
+** Resetting
+
+=M-x fz-index-reset= drops the cached index (rebuilt on next query)
+and clears the base set by =fz-index-open-set-base=.
+
+* How indexing works
 
 Indexing walks the directory tree with a pool of worker threads fed
-by a shared work queue (fd-style parallel traversal) and honors
-=.gitignore= (including per-directory files and =.git/info/exclude=).
-Symlinked directories are not followed — a loop, or a link out of
-the tree, would otherwise keep the scan growing forever (matching
-=fd= and =rg=) — while symlinked files are indexed.  On Windows the
-mingw build cannot always tell links apart, so directory links and
-junctions may still be followed there.  Indexes are persisted under
-=user-emacs-directory/fz-index/= and served
-stale-while-revalidate style: the first search of a session starts
-from the cache instantly while a background rescan refreshes it
-(=fz-index-cache-enabled= to disable).  Live indexes older than
+by a shared work queue and honors =.gitignore= (including
+per-directory files and =.git/info/exclude=).  Symlinked directories
+are not followed — a loop, or a link out of the tree, would
+otherwise keep the scan growing forever (matching =fd= and =rg=) —
+while symlinked files are indexed.  On Windows the mingw build
+cannot always tell links apart, so directory links and junctions may
+still be followed there.
+
+Indexes are persisted under =user-emacs-directory/fz-index/= and
+served stale-while-revalidate style: the first search of a session
+starts from the cache instantly while a background rescan refreshes
+it (=fz-index-cache-enabled= to disable).  Live indexes older than
 =fz-index-max-age= (default 1 hour) are likewise refreshed in the
 background.  Repeated keystrokes rescore only the previous match set
 (incremental narrowing).
@@ -172,33 +244,6 @@ background.  Repeated keystrokes rescore only the previous match set
 =(fz-index-build ROOT &optional NOTIFY-PROCESS NO-GITIGNORE)= is the
 module entry point if you want to drive it yourself; see also
 =fz-index-save= / =fz-index-load= for the on-disk format.
-
-Matching: subsequence with Sublime-style scoring (consecutive,
-word-boundary, camelCase and in-file-name bonuses).  Scoring uses a
-Smith-Waterman-style DP that evaluates every alignment, exactly like
-Sublime itself, so a query like =emacs.c= ranks =src/emacs.c= first.
-Smart case: all-lowercase pattern is case-insensitive; any uppercase
-makes it sensitive.
-
-* Limitations
-
-- Remote (TRAMP) directories cannot be indexed; the module reads the
-  local filesystem only and signals an error for remote roots.
-- File names that are not valid UTF-8 are skipped (the module API
-  cannot pass them to Lisp strings).
-
-
-* How it differs from consult-find / projectile / fzf.el
-
-- =consult-find= and =fzf.el= shell out to an external program
-  (find/fd/fzf) and stream the whole file list through a process
-  pipe; fz-index keeps the index in-process, so per-keystroke cost
-  does not depend on process startup or pipe throughput.
-- =projectile= and friends index in Emacs Lisp, where hundreds of
-  thousands of file names pressure the GC; fz-index holds paths in C
-  memory and hands Lisp only the top 100 matches per keystroke.
-- Matching and ranking follow Sublime Text's Goto Anything,
-  including its habit of ranking =src/emacs.c= first for =emacs.c=.
 
 * Performance (400k files, synthetic third_party-style tree)
 
@@ -224,3 +269,10 @@ is I/O-bound and varies a lot by platform and filesystem.  As an
 example, the same synthetic tree with the mingw build on Windows
 (8 threads, NTFS) indexes in ~28 s while per-keystroke queries stay
 in the tens of milliseconds.
+
+* Limitations
+
+- Remote (TRAMP) directories cannot be indexed; the module reads the
+  local filesystem only and signals an error for remote roots.
+- File names that are not valid UTF-8 are skipped (the module API
+  cannot pass them to Lisp strings).
