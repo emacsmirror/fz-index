@@ -76,6 +76,9 @@
 ;; flag and kill-emacs-hook are let-bound, so the global state stays
 ;; untouched; unwind-protect removes the temp path (a directory,
 ;; later a file) even when an assertion fails.
+;; The error class is version-dependent: Emacs 29 signals a plain
+;; `error' ("Maximum buffer size exceeded") for a directory, other
+;; versions signal `file-error', so accept any error here.
 (let ((fz-index-history-file (make-temp-file "fz-hist-dir" t))
       (fz-index--history (make-hash-table :test 'equal))
       (fz-index--history-loaded nil)
@@ -84,8 +87,8 @@
       (progn
         (unless (condition-case nil
                     (progn (fz-index--ensure-history) nil)
-                  (file-error t))
-          (error "BUG: unreadable history file did not signal file-error"))
+                  (error t))
+          (error "BUG: unreadable history file did not signal"))
         (when fz-index--history-loaded
           (error "BUG: loaded flag set despite the failed load"))
         (when (member #'fz-index--history-save kill-emacs-hook)
